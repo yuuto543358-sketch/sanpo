@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>さんぽみち v2</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <style>
 :root{
   --paper:#EDE8D7;
@@ -167,6 +168,48 @@ details.guide ol{margin:8px 0 0 20px;}
   position:absolute;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 16px);
   text-align:center;color:#7d968a;font-size:11px;pointer-events:none;
 }
+#btnShowMap{
+  pointer-events:auto;border:1px solid rgba(255,255,255,.35);background:rgba(10,20,22,.55);
+  color:#e8f0ea;border-radius:10px;padding:9px 12px;font-size:16px;cursor:pointer;flex-shrink:0;
+}
+
+/* ---------- 周辺マップ ---------- */
+#mapScreen{padding:0;}
+#leafletMap{position:absolute;top:0;left:0;right:0;bottom:0;}
+#mapScreen .v3-top{z-index:16;}
+#btnBackMap{
+  pointer-events:auto;border:1px solid rgba(255,255,255,.35);background:rgba(10,20,22,.55);
+  color:#e8f0ea;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer;
+}
+#mapTitle{
+  color:#e8f0ea;font-size:16px;font-weight:800;letter-spacing:.08em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-shadow:0 1px 4px rgba(0,0,0,.6);flex:1;
+}
+.map-loading{
+  position:absolute;top:calc(env(safe-area-inset-top) + 60px);left:50%;transform:translateX(-50%);
+  background:rgba(20,20,20,.78);color:#fff;font-size:12px;padding:8px 14px;border-radius:20px;z-index:20;
+  max-width:80%;text-align:center;
+}
+.map-loading.hidden{display:none;}
+.poi-panel{
+  position:absolute;left:0;right:0;bottom:0;max-height:38%;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background:rgba(237,232,215,.97);border-top:1px solid var(--contour);
+  padding:8px 14px calc(env(safe-area-inset-bottom) + 10px);z-index:15;
+}
+.poi-panel.hidden{display:none;}
+.poi-header{font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--forest);padding:6px 0;}
+.poi-empty{font-size:12px;color:#6d6753;padding:8px 0;line-height:1.7;}
+.poi-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #ddd3ae;font-size:13px;cursor:pointer;}
+.poi-item:last-child{border-bottom:none;}
+.poi-icon{font-size:18px;width:22px;text-align:center;flex-shrink:0;}
+.poi-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
+.poi-type{font-size:11px;color:#6d6753;}
+.poi-pin{
+  font-size:16px;line-height:26px;width:26px;height:26px;text-align:center;
+  background:#fff;border-radius:50%;border:1px solid var(--contour);
+  box-shadow:0 1px 3px rgba(0,0,0,.35);
+}
 
 /* ---------- 写真モーダル ---------- */
 .modal{
@@ -216,8 +259,10 @@ details.guide ol{margin:8px 0 0 20px;}
       <li>いい景色は「写真をとる」→ 写真がその場所に<b>看板みたいに立ちます</b></li>
       <li>おわったら「きろくを終わる」→ 名前をつけて保存</li>
       <li>コースをタップ → 3D表示。「▶ 再生」で道をたどるアニメも見られるよ</li>
+      <li>3D表示の右上「🗺」をおすと、そのコースの周辺地図とお店・施設が見られるよ</li>
     </ol>
-    ※ データは全部このスマホの中だけに保存されます(ネット送信なし)
+    ※ きろくのデータは全部このスマホの中だけに保存されます(ネット送信なし)<br>
+    ※ ただし「🗺 周辺マップ」を開いたときだけ、地図画像と周辺施設情報を取得するためにインターネット通信を行います(OpenStreetMap)
   </details>
   <div class="ver">さんぽみち v2</div>
 </div>
@@ -257,10 +302,22 @@ details.guide ol{margin:8px 0 0 20px;}
   <div class="v3-top">
     <button type="button" id="btnBack3d">← もどる</button>
     <div id="v3Title"></div>
+    <button type="button" id="btnShowMap">🗺</button>
   </div>
   <button type="button" id="btnPlay">▶ さんぽを再生</button>
   <div class="v3-info" id="v3Info"></div>
   <div class="v3-hint">ゆびで まわす ・ 2本ゆびで 大きく/小さく ・ 写真をタップで拡大</div>
+</div>
+
+<!-- 周辺マップ -->
+<div id="mapScreen" class="screen">
+  <div id="leafletMap"></div>
+  <div class="v3-top">
+    <button type="button" id="btnBackMap">← もどる</button>
+    <div id="mapTitle"></div>
+  </div>
+  <div id="poiLoading" class="map-loading hidden">周辺のお店・施設をさがしています…</div>
+  <div id="poiPanel" class="poi-panel hidden"></div>
 </div>
 
 <!-- 写真モーダル -->
@@ -270,6 +327,7 @@ details.guide ol{margin:8px 0 0 20px;}
   <button type="button" id="btnClosePhoto">とじる</button>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 'use strict';
 /* なにかエラーが起きたら、画面の上に赤い帯で表示する */
@@ -752,11 +810,12 @@ $('btnDiscard').addEventListener('click', function(){
 
 /* ---------- 3D表示(見る・再生) ---------- */
 var v3 = { scene: null, photos: [], yaw: 0.7, pitch: 0.65, dist: 300,
-           auto: true, raf: 0, photoScreen: [], progress: null, play: false };
+           auto: true, raf: 0, photoScreen: [], progress: null, play: false, course: null };
 
 function open3D(c){
   var scene = sceneFromPoints(c.points);
   if (!scene){ alert('このコースには地点データがありません。'); return; }
+  v3.course = c;
   v3.scene = scene;
   v3.photos = c.photos;
   v3.yaw = 0.7;
@@ -887,6 +946,176 @@ $('btnClosePhoto').addEventListener('click', function(){
 $('btnBack3d').addEventListener('click', function(){
   cancelAnimationFrame(v3.raf);
   show('home');
+});
+
+/* ==================================================
+   周辺マップ(OpenStreetMap + Overpass API で
+   コースの近くのお店・施設をさがして表示する)
+   ================================================== */
+var POI_LABELS = {
+  cafe: ['☕','カフェ'], restaurant: ['🍴','レストラン'], fast_food: ['🍔','ファストフード'],
+  toilets: ['🚻','トイレ'], drinking_water: ['🚰','水飲み場'], bench: ['🪑','ベンチ'],
+  vending_machine: ['🥤','自販機'], convenience: ['🏪','コンビニ'], convenience_store: ['🏪','コンビニ'],
+  pharmacy: ['💊','薬局'], bank: ['🏦','銀行'], fuel: ['⛽','ガソリンスタンド'],
+  parking: ['🅿️','駐車場'], ice_cream: ['🍦','アイス'], atm: ['🏧','ATM'],
+  viewpoint: ['👀','展望スポット'], attraction: ['📍','観光名所'], artwork: ['🎨','アート'], museum: ['🏛️','美術館・博物館'],
+  park: ['🌳','公園'], playground: ['🛝','遊び場'],
+  supermarket: ['🛒','スーパー'], bakery: ['🥐','パン屋'], clothes: ['👕','衣料品店'],
+  hairdresser: ['💇','美容室'], florist: ['💐','花屋'], books: ['📚','書店']
+};
+function poiMeta(tags){
+  var key = tags.amenity || tags.tourism || tags.leisure || tags.shop || 'spot';
+  var info = POI_LABELS[key] || ['📍', key];
+  return { icon: info[0], label: info[1], name: tags.name || info[1] };
+}
+function computeBBox(points, marginDeg){
+  var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity, i;
+  for (i = 0; i < points.length; i++){
+    if (points[i].lat < minLat) minLat = points[i].lat;
+    if (points[i].lat > maxLat) maxLat = points[i].lat;
+    if (points[i].lng < minLng) minLng = points[i].lng;
+    if (points[i].lng > maxLng) maxLng = points[i].lng;
+  }
+  return { south: minLat - marginDeg, west: minLng - marginDeg, north: maxLat + marginDeg, east: maxLng + marginDeg };
+}
+function buildOverpassQuery(bbox){
+  var b = bbox.south + ',' + bbox.west + ',' + bbox.north + ',' + bbox.east;
+  return '[out:json][timeout:20];(' +
+    'node["amenity"~"^(cafe|restaurant|fast_food|toilets|drinking_water|bench|vending_machine|convenience|pharmacy|bank|fuel|parking|ice_cream)$"](' + b + ');' +
+    'node["shop"](' + b + ');' +
+    'node["tourism"~"^(viewpoint|attraction|artwork|museum)$"](' + b + ');' +
+    'node["leisure"~"^(park|playground)$"](' + b + ');' +
+    ');out body 150;';
+}
+function nearestDist(lat, lng, routePts, step){
+  var best = Infinity, p = { lat: lat, lng: lng };
+  for (var i = 0; i < routePts.length; i += step){
+    var d = hav(p, routePts[i]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+function filterNearRoute(elements, routePts, maxMeters){
+  var step = Math.max(1, Math.floor(routePts.length / 200));
+  var out = [];
+  for (var i = 0; i < elements.length; i++){
+    var el = elements[i];
+    if (el.type !== 'node' || el.lat == null || el.lon == null) continue;
+    var d = nearestDist(el.lat, el.lon, routePts, step);
+    if (d <= maxMeters) out.push({ lat: el.lat, lon: el.lon, tags: el.tags || {}, d: d });
+  }
+  out.sort(function(a, b){ return a.d - b.d; });
+  return out.slice(0, 60);
+}
+
+var mapObj = null, routeLayer = null, poiLayerGroup = null, poiCache = {};
+function ensureMap(){
+  if (!mapObj){
+    mapObj = L.map('leafletMap', { zoomControl: false });
+    L.control.zoom({ position: 'topright' }).addTo(mapObj);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    }).addTo(mapObj);
+  }
+  return mapObj;
+}
+
+function openMap(c){
+  $('mapTitle').textContent = c.name;
+  show('mapScreen');
+  requestAnimationFrame(function(){
+    var map = ensureMap();
+    map.invalidateSize();
+    if (routeLayer) map.removeLayer(routeLayer);
+    var latlngs = c.points.map(function(p){ return [p.lat, p.lng]; });
+    routeLayer = L.polyline(latlngs, { color: '#D34E24', weight: 4 }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+    L.circleMarker(latlngs[0], { radius: 7, color: '#4A6741', fillColor: '#4A6741', fillOpacity: 1 })
+      .addTo(map).bindPopup('スタート');
+    L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#D34E24', fillColor: '#D34E24', fillOpacity: 1 })
+      .addTo(map).bindPopup('ゴール');
+    loadPOIs(c);
+  });
+}
+
+function loadPOIs(c){
+  if (poiLayerGroup){ mapObj.removeLayer(poiLayerGroup); poiLayerGroup = null; }
+  $('poiPanel').classList.add('hidden');
+  if (poiCache[c.id]){ renderPOIs(c, poiCache[c.id]); return; }
+  $('poiLoading').textContent = '周辺のお店・施設をさがしています…';
+  $('poiLoading').classList.remove('hidden');
+  var bbox = computeBBox(c.points, 0.0015); /* だいたい150m分の余白 */
+  var query = buildOverpassQuery(bbox);
+  fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query)
+  }).then(function(r){
+    if (!r.ok) throw new Error('bad response');
+    return r.json();
+  }).then(function(data){
+    var pois = filterNearRoute(data.elements || [], c.points, 120);
+    poiCache[c.id] = pois;
+    renderPOIs(c, pois);
+  }).catch(function(){
+    $('poiLoading').textContent = '周辺情報を取得できませんでした。通信環境を確認してもう一度お試しください。';
+  });
+}
+
+function renderPOIs(c, pois){
+  $('poiLoading').classList.add('hidden');
+  poiLayerGroup = L.layerGroup().addTo(mapObj);
+  var panel = $('poiPanel');
+  panel.innerHTML = '';
+  panel.classList.remove('hidden');
+  if (!pois.length){
+    panel.innerHTML = '<div class="poi-empty">このコースの近くには、地図に登録されているお店・施設が見つかりませんでした。</div>';
+    return;
+  }
+  var header = document.createElement('div');
+  header.className = 'poi-header';
+  header.textContent = '周辺のスポット(' + pois.length + '件)';
+  panel.appendChild(header);
+  pois.forEach(function(p){
+    var meta = poiMeta(p.tags);
+    var marker = L.marker([p.lat, p.lon], {
+      icon: L.divIcon({ className: 'poi-divicon', html: '<div class="poi-pin">' + meta.icon + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+    }).addTo(poiLayerGroup);
+    var popupEl = document.createElement('div');
+    var b = document.createElement('b'); b.textContent = meta.name;
+    popupEl.appendChild(b);
+    popupEl.appendChild(document.createElement('br'));
+    popupEl.appendChild(document.createTextNode(meta.label));
+    marker.bindPopup(popupEl);
+
+    var row = document.createElement('div');
+    row.className = 'poi-item';
+    var icon = document.createElement('div');
+    icon.className = 'poi-icon'; icon.textContent = meta.icon;
+    var textWrap = document.createElement('div');
+    textWrap.style.minWidth = '0'; textWrap.style.flex = '1';
+    var nameEl = document.createElement('div');
+    nameEl.className = 'poi-name'; nameEl.textContent = meta.name;
+    var typeEl = document.createElement('div');
+    typeEl.className = 'poi-type'; typeEl.textContent = meta.label;
+    textWrap.appendChild(nameEl); textWrap.appendChild(typeEl);
+    row.appendChild(icon); row.appendChild(textWrap);
+    row.addEventListener('click', function(){
+      mapObj.setView([p.lat, p.lon], 18);
+      marker.openPopup();
+    });
+    panel.appendChild(row);
+  });
+}
+
+$('btnShowMap').addEventListener('click', function(){
+  if (!v3.course) return;
+  cancelAnimationFrame(v3.raf);
+  openMap(v3.course);
+});
+$('btnBackMap').addEventListener('click', function(){
+  show('view3d');
+  loop3D();
 });
 
 /* ---------- おためしコース ---------- */
