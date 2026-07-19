@@ -283,7 +283,7 @@ details.guide ol{margin:8px 0 0 20px;}
     <button type="button" id="btnStop">■ きろくを終わる</button>
   </div>
   <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
-  <p class="hint">上の黒い画面に、歩いた道がリアルタイムで3D表示されます。<br>画面が消えるとGPSが止まるので、つけたまま持ってあるいてね。</p>
+  <p class="hint">上の黒い画面に、歩いた道がリアルタイムで3D表示されます。<br>画面をつけたまま持ってあるいてね。他のアプリに切り替えたり画面をロックすると、機種によってはGPSの記録が一時停止することがあります(この画面を前面に出しておくと確実です)。</p>
 </div>
 
 <!-- 保存 -->
@@ -661,6 +661,8 @@ function renderHome(){
 var watchId = null, recPoints = [], recPhotos = [], recDist = 0;
 var recStart = 0, recEnd = 0, timerIv = null, wakeLock = null;
 var liveScene = null, liveYaw = 0.7;
+var lastFixTime = 0, gpsWatchdogIv = null, hiddenAt = 0;
+var GPS_OPTS = { enableHighAccuracy: true, maximumAge: 3000, timeout: 25000 };
 
 function reqWake(){
   try {
@@ -669,8 +671,40 @@ function reqWake(){
     }
   } catch (e) {}
 }
+
+/* GPSの更新がしばらく来ないときは、監視をとり直す(スリープ復帰後などに固まったままになるのを防ぐ) */
+function startWatch(){
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(onPos, onGpsErr, GPS_OPTS);
+}
+function startGpsWatchdog(){
+  stopGpsWatchdog();
+  gpsWatchdogIv = setInterval(function(){
+    if (watchId == null) return;
+    if (lastFixTime && Date.now() - lastFixTime > 25000){
+      startWatch();
+    }
+  }, 10000);
+}
+function stopGpsWatchdog(){
+  if (gpsWatchdogIv){ clearInterval(gpsWatchdogIv); gpsWatchdogIv = null; }
+}
+
 document.addEventListener('visibilitychange', function(){
-  if (watchId != null && document.visibilityState === 'visible') reqWake();
+  if (watchId == null) return;
+  if (document.visibilityState === 'hidden'){
+    hiddenAt = Date.now();
+  } else if (document.visibilityState === 'visible'){
+    reqWake();
+    startWatch(); /* 他アプリ切替・ロック画面から戻ったときにすぐ再取得させる */
+    if (hiddenAt){
+      var gap = Date.now() - hiddenAt;
+      if (gap > 8000){
+        $('gpsMsg').textContent = 'おかえりなさい(' + Math.round(gap / 1000) + '秒 非表示でした。この間は記録が止まっていた場合があります)';
+      }
+      hiddenAt = 0;
+    }
+  }
 });
 
 $('btnNewWalk').addEventListener('click', function(){
@@ -679,7 +713,7 @@ $('btnNewWalk').addEventListener('click', function(){
     return;
   }
   recPoints = []; recPhotos = []; recDist = 0; recStart = Date.now();
-  liveScene = null; liveYaw = 0.7;
+  liveScene = null; liveYaw = 0.7; lastFixTime = 0; hiddenAt = 0;
   $('stTime').textContent = '0:00';
   $('stDist').textContent = '0';
   $('stPts').textContent = '0';
@@ -687,8 +721,8 @@ $('btnNewWalk').addEventListener('click', function(){
   $('gpsMsg').textContent = 'GPSをさがしています…(空の見える場所だと早いよ)';
   show('record');
   reqWake();
-  watchId = navigator.geolocation.watchPosition(onPos, onGpsErr,
-    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  startWatch();
+  startGpsWatchdog();
   timerIv = setInterval(function(){
     var s = Math.floor((Date.now() - recStart) / 1000);
     var h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
@@ -700,8 +734,10 @@ $('btnNewWalk').addEventListener('click', function(){
 
 function onPos(pos){
   var c = pos.coords;
-  $('gpsMsg').textContent = 'GPSの精度: ±' + Math.round(c.accuracy) + 'm';
-  if (c.accuracy > 40) return;
+  lastFixTime = Date.now();
+  var okAcc = c.accuracy <= 50;
+  $('gpsMsg').textContent = 'GPSの精度: ±' + Math.round(c.accuracy) + 'm' + (okAcc ? '' : '(精度が低いので記録待ち…)');
+  if (!okAcc) return;
   var pt = { lat: c.latitude, lng: c.longitude,
              alt: (c.altitude == null ? null : c.altitude), t: Date.now() };
   var last = recPoints[recPoints.length - 1];
@@ -717,8 +753,13 @@ function onPos(pos){
   liveScene = sceneFromPoints(recPoints); /* ← 新しい地点が入るたびに3Dを作りなおす */
 }
 function onGpsErr(err){
-  if (err && err.code === 1){
+  var code = err ? err.code : 0;
+  if (code === 1){
     $('gpsMsg').textContent = '位置情報がオフです。設定→プライバシー→位置情報サービスで Safari を「許可」にしてね。';
+  } else if (code === 2){
+    $('gpsMsg').textContent = 'GPSの電波が受信できません。空の見える場所に移動してみてね。';
+  } else if (code === 3){
+    $('gpsMsg').textContent = 'GPSの取得に時間がかかっています…このまま少し待ってね。';
   } else {
     $('gpsMsg').textContent = 'GPSをさがしています…';
   }
@@ -765,6 +806,7 @@ function compressImage(file, cb){
 /* ---------- 記録おわり・保存 ---------- */
 $('btnStop').addEventListener('click', function(){
   if (watchId != null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+  stopGpsWatchdog();
   clearInterval(timerIv);
   if (wakeLock){ try { wakeLock.release(); } catch (e) {} wakeLock = null; }
   recEnd = Date.now();
